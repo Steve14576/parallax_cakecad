@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CakeObject, ProjectCommand, ProjectSnapshot } from "@cakecad/contracts";
 import { loadProject, sendCommand } from "./api";
 
-type PendingPlacement = { objectId: string; containerId: string } | null;
+type ContextMenu = {
+  objectId: string;
+  x: number;
+  y: number;
+} | null;
 
 const roleLabels: Record<CakeObject["role"], string> = {
   material: "物料",
@@ -15,8 +19,8 @@ const roleLabels: Record<CakeObject["role"], string> = {
 export function App() {
   const [project, setProject] = useState<ProjectSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [zone, setZone] = useState<"hot" | "cold">("hot");
-  const [pendingPlacement, setPendingPlacement] = useState<PendingPlacement>(null);
+  const [laneMode, setLaneMode] = useState<"hot" | "cold">("hot");
+  const [contextMenu, setContextMenu] = useState<ContextMenu>(null);
   const [commandText, setCommandText] = useState("");
   const [message, setMessage] = useState("正在连接本地核心…");
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -28,6 +32,12 @@ export function App() {
         setMessage("本地核心已连接");
       })
       .catch((error: unknown) => setMessage(error instanceof Error ? error.message : "连接失败"));
+  }, []);
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
   }, []);
 
   const selected = useMemo(
@@ -47,6 +57,7 @@ export function App() {
   function onDragStart(event: React.DragEvent, objectId: string) {
     event.dataTransfer.setData("text/cakecad-object", objectId);
     setSelectedId(objectId);
+    setContextMenu(null);
   }
 
   function onCanvasDrop(event: React.DragEvent) {
@@ -58,11 +69,19 @@ export function App() {
     const x = Math.max(8, Math.min(event.clientX - rect.left - 54, rect.width - 122));
     const y = Math.max(8, Math.min(event.clientY - rect.top - 28, rect.height - 68));
     void execute({ type: "moveObject", objectId, x, y });
+  }
 
-    const bowl = project.objects.find(({ id }) => id === "bowl");
-    if (bowl && objectId !== bowl.id && Math.hypot(x - bowl.x, y - bowl.y) < 115) {
-      setPendingPlacement({ objectId, containerId: bowl.id });
-    }
+  function openContextMenu(event: React.MouseEvent, objectId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedId(objectId);
+    setContextMenu({ objectId, x: event.clientX, y: event.clientY });
+  }
+
+  function commitPlacement(commitMaterialTransfer: boolean) {
+    if (!selectedId) return;
+    setContextMenu(null);
+    void execute({ type: "placeInContainer", objectId: selectedId, containerId: "bowl", commitMaterialTransfer });
   }
 
   function runCommand() {
@@ -90,7 +109,10 @@ export function App() {
     return <main className="loading">{message}</main>;
   }
 
-  const visibleObjects = project.objects.filter((object) => object.zone === zone);
+  const timelineEvents = project.events.filter((event) => {
+    if (laneMode === "hot") return event.status !== "measured" || event.kind === "segment";
+    return true;
+  });
 
   return (
     <main className="app-shell">
@@ -123,19 +145,19 @@ export function App() {
         <section className="canvas-panel panel">
           <div className="canvas-toolbar">
             <div className="zone-tabs">
-              <button className={zone === "hot" ? "active" : ""} onClick={() => setZone("hot")}>热区</button>
-              <button className={zone === "cold" ? "active" : ""} onClick={() => setZone("cold")}>冷区</button>
+              <button className={laneMode === "hot" ? "active" : ""} onClick={() => setLaneMode("hot")}>热区</button>
+              <button className={laneMode === "cold" ? "active" : ""} onClick={() => setLaneMode("cold")}>冷区</button>
             </div>
-            <span>{visibleObjects.length} 个对象 · 拖动物料靠近搅拌碗</span>
+            <span>冷热区只影响时间轨线段呈现 · 工作区始终保留全部对象</span>
           </div>
           <div
-            className={`semantic-canvas zone-${zone}`}
+            className="semantic-canvas"
             ref={canvasRef}
             onDragOver={(event) => event.preventDefault()}
             onDrop={onCanvasDrop}
           >
-            <div className="canvas-caption">{zone === "hot" ? "正在发生 / 正在编辑" : "存在，但当前未参与"}</div>
-            {visibleObjects.map((object) => (
+            <div className="canvas-caption">拖动只更新位置 · 物料关系通过右键 / 工具 / CMD 确认</div>
+            {project.objects.map((object) => (
               <button
                 key={object.id}
                 className={`object-card role-${object.role} ${selectedId === object.id ? "selected" : ""}`}
@@ -143,6 +165,7 @@ export function App() {
                 draggable
                 onDragStart={(event) => onDragStart(event, object.id)}
                 onClick={() => setSelectedId(object.id)}
+                onContextMenu={(event) => openContextMenu(event, object.id)}
               >
                 <span className="object-role">{roleLabels[object.role]}</span>
                 <strong>{object.name}</strong>
@@ -160,14 +183,14 @@ export function App() {
                 <span>{roleLabels[selected.role]}</span>
                 <h2>{selected.name}</h2>
               </div>
-              <p>{selected.name} 当前位于{selected.containerId ? "搅拌碗内" : zone === "hot" ? "热区" : "冷区"}，其身份已声明，过程事实仍可继续补充。</p>
+              <p>{selected.name} 当前位于{selected.containerId ? "搅拌碗内" : selected.zone === "hot" ? "主动操作集合" : "持续存在集合"}，其身份已声明，过程事实仍可继续补充。</p>
               <dl>
                 <dt>稳定 ID</dt><dd>{selected.id}</dd>
                 <dt>当前状态</dt><dd>{selected.state ?? "未补充"}</dd>
                 <dt>数据版本</dt><dd>revision {project.revision}</dd>
               </dl>
               <button className="secondary" onClick={() => void execute({ type: "setZone", objectId: selected.id, zone: selected.zone === "hot" ? "cold" : "hot" })}>
-                移至{selected.zone === "hot" ? "冷区" : "热区"}
+                {selected.zone === "hot" ? "撤下主动操作" : "带入选中操作"}
               </button>
             </>
           ) : <p className="empty-copy">选择一张便签，查看它目前被系统知道的内容。</p>}
@@ -176,12 +199,12 @@ export function App() {
 
       <section className="timeline panel">
         <div className="timeline-header">
-          <div><strong>物料＆操作</strong><span>时间是坐标系</span></div>
-          <span>0—90 min</span>
+          <div><strong>物料＆操作</strong><span>{laneMode === "hot" ? "汇聚与转化的片段" : "这个时段还有什么"}</span></div>
+          <span>0—90 min · 无强制当前时刻指针</span>
         </div>
         <div className="ruler">{[0, 15, 30, 45, 60, 75, 90].map((tick) => <span key={tick}>{tick}</span>)}</div>
         <div className="tracks">
-          {project.events.map((event) => {
+          {timelineEvents.map((event) => {
             const width = event.kind === "point" ? 12 : Math.max(8, ((event.end ?? 90) - event.start) / 90 * 100);
             return (
               <button
@@ -206,18 +229,14 @@ export function App() {
         <button onClick={runCommand}>执行</button>
       </footer>
 
-      {pendingPlacement && (
-        <div className="dialog-backdrop">
-          <section className="dialog">
-            <span className="eyebrow">空间 ≠ 物料</span>
-            <h2>这次拖动意味着什么？</h2>
-            <p>对象已经靠近搅拌碗。请选择只记录位置，还是确认发生物料转移。</p>
-            <div className="dialog-actions">
-              <button onClick={() => { void execute({ type: "placeInContainer", ...pendingPlacement, commitMaterialTransfer: false }); setPendingPlacement(null); }}>仅记录空间放置</button>
-              <button className="primary" onClick={() => { void execute({ type: "placeInContainer", ...pendingPlacement, commitMaterialTransfer: true }); setPendingPlacement(null); }}>确认物料转移</button>
-            </div>
-          </section>
-        </div>
+      {contextMenu && (
+        <section className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
+          <header>{project.objects.find(({ id }) => id === contextMenu.objectId)?.name}</header>
+          <button onClick={() => commitPlacement(false)}>放入搅拌碗 · 仅空间</button>
+          <button onClick={() => commitPlacement(true)}>倒入搅拌碗 · 提交物料</button>
+          <button onClick={() => { void execute({ type: "setZone", objectId: contextMenu.objectId, zone: "hot" }); setContextMenu(null); }}>带入选中操作</button>
+          <button onClick={() => { void execute({ type: "setZone", objectId: contextMenu.objectId, zone: "cold" }); setContextMenu(null); }}>结束并从热区撤下</button>
+        </section>
       )}
     </main>
   );
