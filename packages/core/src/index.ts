@@ -5,6 +5,12 @@ import type {
   TimelineEvent,
 } from "@cakecad/contracts";
 
+export const MAX_TIME = 90;
+export const DEFAULT_CLIP_DURATION = 3;
+const MIN_CLIP_DURATION = 0.5;
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
 const initialObjects: CakeObject[] = [
   { id: "flour", name: "面粉", role: "material", x: 58, y: 62, zone: "hot", containerId: null, color: "#f0c96d" },
   { id: "sugar", name: "糖", role: "material", x: 190, y: 72, zone: "hot", containerId: null, color: "#f6d98c" },
@@ -42,24 +48,45 @@ export class ProjectStore {
       case "moveObject":
         this.updateObject(command.objectId, (object) => ({ ...object, x: command.x, y: command.y }));
         break;
+
       case "setZone":
         this.updateObject(command.objectId, (object) => ({ ...object, zone: command.zone }));
         break;
-      case "placeInContainer":
-        this.updateObject(command.objectId, (object) => ({ ...object, containerId: command.containerId }));
-        this.snapshot.events.push({
-          id: crypto.randomUUID(),
-          label: command.commitMaterialTransfer ? "确认物料转移" : "仅记录空间放置",
-          kind: "point",
-          start: 12 + this.snapshot.events.length * 3,
-          end: 12 + this.snapshot.events.length * 3,
-          objectIds: [command.objectId, command.containerId],
-          status: command.commitMaterialTransfer ? "committed" : "sketch",
+
+      case "placeInto": {
+        const object = this.getObject(command.objectId);
+        const target = this.getObject(command.targetId);
+        if (target.role === "container") {
+          this.updateObject(object.id, (current) => ({ ...current, containerId: target.id }));
+        }
+        this.pushClip(`放入：${object.name} → ${target.name}`, command.at, "declared", [object.id, target.id]);
+        break;
+      }
+
+      case "pourInto": {
+        const material = this.getObject(command.materialId);
+        const container = this.getObject(command.containerId);
+        if (material.role !== "material") throw new Error(`“${material.name}”不是物料，不能倒入`);
+        if (container.role !== "container") throw new Error(`“${container.name}”不是容器，不能作为倒入目标`);
+        this.updateObject(material.id, (current) => ({ ...current, containerId: container.id }));
+        this.pushClip(`倒入：${material.name} → ${container.name}`, command.at, "committed", [material.id, container.id]);
+        break;
+      }
+
+      case "updateEventTime":
+        this.updateEvent(command.eventId, (event) => {
+          const start = clamp(command.start, 0, MAX_TIME);
+          const end = command.end === null
+            ? null
+            : clamp(command.end, start + MIN_CLIP_DURATION, MAX_TIME);
+          return { ...event, start, end };
         });
         break;
+
       case "updateNote":
         this.snapshot.note = command.note;
         break;
+
       case "createBranch":
         this.snapshot.branch = command.name;
         this.snapshot.events.push({
@@ -78,9 +105,33 @@ export class ProjectStore {
     return this.read();
   }
 
+  private pushClip(label: string, at: number, status: TimelineEvent["status"], objectIds: string[]): void {
+    this.snapshot.events.push({
+      id: crypto.randomUUID(),
+      label,
+      kind: "segment",
+      start: clamp(at, 0, MAX_TIME - DEFAULT_CLIP_DURATION),
+      end: clamp(at + DEFAULT_CLIP_DURATION, MIN_CLIP_DURATION, MAX_TIME),
+      objectIds,
+      status,
+    });
+  }
+
+  private getObject(id: string): CakeObject {
+    const object = this.snapshot.objects.find((candidate) => candidate.id === id);
+    if (!object) throw new Error(`Object not found: ${id}`);
+    return object;
+  }
+
   private updateObject(id: string, update: (object: CakeObject) => CakeObject): void {
     const index = this.snapshot.objects.findIndex((object) => object.id === id);
     if (index < 0) throw new Error(`Object not found: ${id}`);
     this.snapshot.objects[index] = update(this.snapshot.objects[index]!);
+  }
+
+  private updateEvent(id: string, update: (event: TimelineEvent) => TimelineEvent): void {
+    const index = this.snapshot.events.findIndex((event) => event.id === id);
+    if (index < 0) throw new Error(`Event not found: ${id}`);
+    this.snapshot.events[index] = update(this.snapshot.events[index]!);
   }
 }

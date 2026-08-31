@@ -24,7 +24,7 @@ export const timelineEventSchema = z.object({
   id: z.string(),
   label: z.string(),
   kind: z.enum(["point", "segment"]),
-  start: z.number(),
+  start: z.number().nonnegative(),
   end: z.number().nullable(),
   objectIds: z.array(z.string()),
   status: z.enum(["sketch", "declared", "committed", "measured"]),
@@ -52,10 +52,22 @@ export const projectCommandSchema = z.discriminatedUnion("type", [
     zone: z.enum(["hot", "cold"]),
   }),
   z.object({
-    type: z.literal("placeInContainer"),
+    type: z.literal("placeInto"),
     objectId: z.string(),
+    targetId: z.string(),
+    at: z.number().nonnegative(),
+  }),
+  z.object({
+    type: z.literal("pourInto"),
+    materialId: z.string(),
     containerId: z.string(),
-    commitMaterialTransfer: z.boolean(),
+    at: z.number().nonnegative(),
+  }),
+  z.object({
+    type: z.literal("updateEventTime"),
+    eventId: z.string(),
+    start: z.number().nonnegative(),
+    end: z.number().nullable(),
   }),
   z.object({
     type: z.literal("updateNote"),
