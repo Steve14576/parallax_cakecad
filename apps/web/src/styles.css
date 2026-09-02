@@ -179,12 +179,15 @@ button { color: inherit; }
 /* ── 右栏 ─────────────────────────── */
 .right-column {
   min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(150px, 1.2fr) auto minmax(150px, .8fr);
+  display: flex;
+  flex-direction: column;
   gap: 1px;
   background: var(--line);
   overflow-y: auto;
 }
+.md-panel { flex: 1 1 170px; min-height: 150px; }
+.inspector { flex: 0 0 auto; }
+.cmd-panel { flex: 0 0 170px; }
 .panel { background: var(--panel); overflow: hidden; display: flex; flex-direction: column; }
 .panel-title {
   min-height: 30px;

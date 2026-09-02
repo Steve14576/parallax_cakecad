@@ -36,6 +36,7 @@ pnpm build
 
 ## 文档
 
-- 总规格：`docs/MASTER_SPEC.md`
-- 曲奇纵切：`docs/specs/cookie-first-slice.md`
-- localhost 技术基线：`docs/adrs/0001-localhost-prototype-runtime.md`
+- 总文档（唯一现行产品文档）：`docs/MASTER_SPEC.md`
+- 研发工作稿与台账（原始点+答案+历史旧稿）：`docs/WORKBOOK.md`
+- 元操作研究（命令/内核/效果原语分解，研究中）：`docs/METAOPS.md`
+- 用户手写 L0 手稿：`docs/HANDDRAFT1.md`
